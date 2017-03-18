@@ -3,7 +3,7 @@ from aircraft import Aircraft
 from own_int_pair import OwnIntPair
 from load_data import load_truth, load_radar, load_tracker, load_cat21
 
-SCENARIO_DIR = 'ADS-B_'
+SCENARIO_DIR = 'Radar_'
 LOG_CAT21 = False
 
 cwd = os.getcwd()

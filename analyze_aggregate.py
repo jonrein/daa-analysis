@@ -3,29 +3,14 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from aircraft import Aircraft
+from field_mappings import truth_var_map, error_var_map, error_units, truth_units
+from tracker_requirements import error_requirements_by_sensor, proportion_tracks_under_error_threshold
 
-SCENARIO_SET_DIR = None
-OVERWRITE = True
+OVERWRITE = False
 CWD = os.getcwd()
 DATAPATH = os.path.abspath(os.path.join(CWD, os.pardir, 'data', 'daa-sensors'))
 
 plt.close('all')
-
-truthVarMap = {'Horizontal Range': 'HorizRangeNmi', 'Tau': 'TauMod',
-               'Rate of Turn': 'TurnRateDeg'}
-errorVarMap = {'Horizontal Range': 'Horizontal Range(ft)',
-               'Relative Altitude': 'Relative Altitude(ft)',
-               'Ground Track': 'Heading(deg)', 'Ground Speed': 'Ground Speed(kts)',
-               'Vertical Rate': 'Vertical Rate(ft/min)',
-               'Horizontal Position': 'Horizontal Position(ft)',
-               'Relative Velocity': 'RelHorizVelocity(kts)',
-               'East': 'East(ft)', 'North': 'North(ft)'}
-truthUnits = {'Horizontal Range': 'nmi', 'Tau': 's', 'Rate of Turn': 'deg/s'}
-errorUnits = {'Horizontal Range': 'ft', 'Relative Altitude': 'ft',
-              'Ground Track': 'deg', 'Ground Speed': 'kts',
-              'Vertical Rate': 'ft/min', 'Horizontal Position': 'ft',
-              'Relative Velocity': 'kts', 'East': 'ft', 'North': 'ft',
-              'EN Position': 'ft'}
 
 
 def error_by_var_bin(truth_df, error_df, truth_var, error_var, bin_interval=0.5, valid_filter=False,
@@ -57,10 +42,14 @@ def error_by_var_bin(truth_df, error_df, truth_var, error_var, bin_interval=0.5,
     
     if truth_var == 'Horizontal Range':
         truth['HorizRangeNmi'] = feet_to_nmi(truth['HorizRangeFt'].values)
+        bin_var_name = 'HorizRangeNmi'
     elif truth_var == 'Rate of Turn':
         turn_rate = angle_difference(truth['Bearing(Deg)'].values[1:], truth['Bearing(Deg)'].values[:-1])
         turn_rate = np.concatenate((np.ones(1)*turn_rate[0], turn_rate))
         truth['TurnRateDeg'] = np.abs(turn_rate)
+        bin_var_name = 'TurnRateDeg'
+    else:
+        bin_var_name = truth_var_map[truth_var]
     
     bins = np.arange(truth_var_range[truth_var][0], truth_var_range[truth_var][1] + .00000001,
                      bin_interval)
@@ -76,14 +65,13 @@ def error_by_var_bin(truth_df, error_df, truth_var, error_var, bin_interval=0.5,
         low = bins[i]
         high = bins[i+1]
         center = (high+low)/2
-        bin_var_name = truthVarMap[truth_var]
         bin_truth = truth[(truth[bin_var_name] <= high) & (truth[bin_var_name] > low)]
         if len(bin_truth) == 0:
             continue
         if in_volume_filter and (low == 0):
             continue
         bin_error = error.loc[bin_truth.index]
-        error_var_name = errorVarMap[error_var]
+        error_var_name = error_var_map[error_var]
         bin_error_vals = bin_error[error_var_name].values
         mean = bin_error_vals.mean()
         sigma = bin_error_vals.std()
@@ -123,47 +111,20 @@ def plot_comparison(set_dirs, truth_var, error_var, label='', legend=False, plot
                 return ticks
 
     def draw_sensor_cutoffs(sensor, error_var):
-        def draw_adsb_cutoffs(error_var):
-            cutoffs = {'Horizontal Position': 900,
-                       'Relative Altitude': 300,
-                       'Relative Velocity': 30,
-                       'Vertical Rate': 400}
-            if error_var in cutoffs:
-                plt.axhline(cutoffs[error_var], color=colors['ADS-B'], lw=2.5, alpha=.75, zorder=2)
-                return (cutoffs[error_var],)
+        try:
+            if sensor.startswith('AST'):
+                sensor_type = 'AST'
+            else:
+                sensor_type = sensor
+            x_points, y_points = error_requirements_by_sensor[sensor_type].get_plot_params(error_var)
+            if not hasattr(y_points, '__iter__'):
+                y_points = (y_points, y_points)
+            plt.plot(x_points, y_points, color=colors[sensor], lw=2.5, alpha=.75, zorder=2)
+            return y_points
+        except KeyError:
+            return None
 
-        def draw_radar_cutoffs(error_var):
-            cutoffs = {'Horizontal Position': (125, 250),
-                       'Relative Altitude': (100, 150),
-                       'Relative Velocity': (10, 50),
-                       'Vertical Rate': (380, 800)}
-            if error_var in cutoffs:
-                a, b = cutoffs[error_var]
-                x_points = np.array([1, 6.7])
-                y_points = a*(x_points-1) + b
-                plt.plot(x_points, y_points, color=colors['Radar'], lw=2.5, alpha=.75, zorder=2)
-                return tuple(y_points)
-
-        def draw_ast_cutoffs(error_var):
-            cutoffs = {'Horizontal Position': (1000, 1250),
-                       'Relative Altitude': 300,
-                       'Relative Velocity': (33, 85),
-                       'Vertical Rate': 400}
-            if error_var in ('Relative Altitude', 'Vertical Rate'):
-                plt.axhline(cutoffs[error_var], color=colors['AST-S'], lw=2.5, alpha=.75, zorder=2)
-                return (cutoffs[error_var],)
-            elif error_var in ('Horizontal Position', 'Relative Velocity'):
-                a, b = cutoffs[error_var]
-                x_points = np.array([0.5, 14])
-                y_points = a*(x_points-0.5) + b
-                plt.plot(x_points, y_points, color=colors['AST-S'], lw=2.5, alpha=.75, zorder=2)
-                return tuple(y_points)
-        if sensor == 'ADS-B':
-            return draw_adsb_cutoffs(error_var)
-        elif sensor == 'Radar':
-            return draw_radar_cutoffs(error_var)
-        elif sensor.startswith('AST-'):
-            return draw_ast_cutoffs(error_var)
+    x_units = {'Horizontal Range': 'nmi', 'Tau': 's', 'Rate of Turn': 'deg/s'}
             
     line_formats = {'HALE Correlated': ['solid', 'x'],
                     'HALE Uncorrelated': ['solid', 'o'],
@@ -218,8 +179,8 @@ def plot_comparison(set_dirs, truth_var, error_var, label='', legend=False, plot
             max_yval = max(max_yval, max(cutoff_y_vals))
             min_yval = min(min_yval, min(cutoff_y_vals))
         
-    plt.xlabel(truth_var + ' (' + truthUnits[truth_var] + ')', fontsize=10)
-    plt.ylabel(error_var + ' Error (' + errorUnits[error_var] + ')', fontsize=10)
+    plt.xlabel(truth_var + ' (' + x_units[truth_var] + ')', fontsize=10)
+    plt.ylabel(error_var + ' Error (' + error_units[error_var] + ')', fontsize=10)
     plt.title(error_var + ' Error as a Function of ' + truth_var, fontsize=10)
     plt.xticks(np.arange(0, 16))
     y_ticks_major = get_best_ticks(0, max_yval)
@@ -317,7 +278,7 @@ def plot_sensor_errors(sensor_df, sensor_type, plot_path=None):
             plt.savefig(os.path.join(plot_path, sensor_type + '_' + field + '_Errors_Hist'), dpi=300)
 
 
-def write_all_data(scenario_set_directory=SCENARIO_SET_DIR, valid_wait_secs=0):
+def write_all_data(scenario_set_directory, valid_wait_secs=0):
     from load_data import load_tracker_error_settled
     scenario_set_path = os.path.join(DATAPATH, scenario_set_directory, 'Scenario_Output')
     truth_path = os.path.join(scenario_set_path, 'Truth', 'Truth_Logs')
@@ -412,29 +373,72 @@ def write_all_data(scenario_set_directory=SCENARIO_SET_DIR, valid_wait_secs=0):
     pd.DataFrame(set_summary, index=[0]).to_csv(os.path.join(output_path, 'set_summary.csv'), index=False)
 
 
-def write_scenario_set_output(scenario_set_directory=SCENARIO_SET_DIR, valid_wait_secs=0):
-    output_path = os.path.join(DATAPATH, scenario_set_directory, 'Aggregate_Output')
-    adsb_output_path = os.path.join(output_path, 'ADS-B')
-    adsb_ownship_output_path = os.path.join(adsb_output_path, 'Ownship')
-    adsb_intruder_output_path = os.path.join(adsb_output_path, 'Intruder')
-    radar_output_path = os.path.join(output_path, 'Radar')
-    tracker_output_path = os.path.join(output_path, 'Tracker')
+def write_scenario_set_output(scenario_set_directory, valid_wait_secs=0):
+    if (not os.path.exists(os.path.join(DATAPATH, scenario_set_directory, 'Aggregate_Output', 'Tracker'))) or \
+            OVERWRITE:
+        output_path = os.path.join(DATAPATH, scenario_set_directory, 'Aggregate_Output')
+        adsb_output_path = os.path.join(output_path, 'ADS-B')
+        adsb_ownship_output_path = os.path.join(adsb_output_path, 'Ownship')
+        adsb_intruder_output_path = os.path.join(adsb_output_path, 'Intruder')
+        radar_output_path = os.path.join(output_path, 'Radar')
+        tracker_output_path = os.path.join(output_path, 'Tracker')
 
-    for p in (output_path, adsb_output_path, adsb_ownship_output_path, adsb_intruder_output_path,
-              radar_output_path, tracker_output_path):
-        if not os.path.exists(p):
-            os.mkdir(p)
+        for p in (output_path, adsb_output_path, adsb_ownship_output_path, adsb_intruder_output_path,
+                  radar_output_path, tracker_output_path):
+            if not os.path.exists(p):
+                os.mkdir(p)
 
-    if OVERWRITE:
         write_all_data(scenario_set_directory, valid_wait_secs)
 
 
+def write_tracker_requirements_by_scenario(scenario_set_directory):
+    from conversions import feet_to_nmi
+    write_scenario_set_output(scenario_set_directory)
+    sensor = scenario_set_directory.split('_')[0]
+    if sensor.startswith('AST'):
+        sensor = 'AST'
+    log = {'ScenarioID': [], 'ProportionMet': [], 'ProportionValidMet': []}
+    for fn in os.listdir(os.path.join(DATAPATH, scenario_set_directory, 'Scenario_Output', 'Truth',
+                                      'Truth_Logs')):
+        scenario_name = fn.rsplit('_', 2)[0]
+        print(scenario_name)
+        scenario_id = scenario_name.split('_')[0]
+        log['ScenarioID'].append(scenario_id)
+        truth_df_tmp = pd.read_csv(os.path.join(DATAPATH, scenario_set_directory, 'Scenario_Output', 'Truth',
+                                                'Truth_Logs', fn))
+        if truth_units['Horizontal Range'] == 'ft':
+            in_valid_range = error_requirements_by_sensor[sensor].in_valid_range(
+                feet_to_nmi(truth_df_tmp[truth_var_map['Horizontal Range']]))
+        else:
+            in_valid_range = error_requirements_by_sensor[sensor].in_valid_range(
+                truth_df_tmp[truth_var_map['Horizontal Range']])
+        if sum(in_valid_range) == 0:
+            log['ProportionMet'].append('TruthOutsideBounds')
+            log ['ProportionValidMet'].append('TruthOutsideBounds')
+            continue
+        try:
+            error_df = pd.read_csv(os.path.join(DATAPATH, scenario_set_directory, 'Scenario_Output', 'Tracker',
+                                                'Error_Logs', scenario_name + '_tracker.csv'))
+            truth_df_tmp.set_index('TimeSecs', inplace=True)
+            error_df.set_index('TimeSecs', inplace=True)
+            truth_df = Aircraft(truth_df_tmp).get_truth_interpolated(error_df, True)
+            proportion_met = proportion_tracks_under_error_threshold(truth_df, error_df, sensor)
+            log['ProportionMet'].append(proportion_met)
+            proportion_valid_met = proportion_tracks_under_error_threshold(truth_df, error_df, sensor, valid_filter=True)
+            log['ProportionValidMet'].append(proportion_valid_met)
+        except OSError:  # no tracker data
+            log['ProportionMet'].append('NoTrackerData')
+            log['ProportionValidMet'].append('NoTrackerData')
+    pd.DataFrame(log).to_csv(os.path.join(DATAPATH, scenario_set_directory, 'Aggregate_Output', 'Tracker',
+                                          'Error_requirements_log.csv'))
+
+
 if __name__ == '__main__':
-    scenario_sets = ['Radar_', 'ADS-B_', 'AST-S_', 'AST-C_']
+    scenario_sets = ['ADS-B_', 'Radar_', 'AST-S_', 'AST-C_']
 
     for s_set in scenario_sets:
-        sensor = s_set.split('_')[0]
         write_scenario_set_output(s_set)
+        # write_tracker_requirements_by_scenario(s_set)
 
     comparison_output_path = os.path.join(DATAPATH, 'Comparisons')
     if not os.path.exists(comparison_output_path):
