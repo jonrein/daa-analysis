@@ -45,6 +45,20 @@ error_requirements_by_sensor = {'ADS-B': SensorError({'Horizontal Position': 900
                                                      (1, 6.7))}
 
 
+def first_good_track_time(truth_df, error_df, sensor):
+    assert len(truth_df) == len(error_df)
+    # Filter data
+    keep_bools = np.ones(truth_df.shape[0], dtype=bool)
+    keep_bools &= error_requirements_by_sensor[sensor].in_valid_range(
+        feet_to_nmi(truth_df[truth_var_map['Horizontal Range']]))
+    keep_bools = error_df['Valid'] == 1
+    try:
+        first_ix = np.nonzero(keep_bools)[0][0]
+        return truth_df.index[first_ix]
+    except IndexError:
+        return None
+
+
 def proportion_tracks_under_error_threshold(truth_df, error_df, sensor, error_var='all', require_valid_flag=True,
                                             detection_range_filter=True, valid_filter=False):
     assert len(truth_df) == len(error_df)

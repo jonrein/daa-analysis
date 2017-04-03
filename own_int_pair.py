@@ -46,11 +46,12 @@ class OwnIntPair(object):
         range_rt = np.hstack((np.ones(10) * range_rt[0], range_rt))
         int_df['RangeRtFtSec'] = range_rt
         int_df['HorizRangeFt'] = np.sqrt(int_enu[0] ** 2 + int_enu[1] ** 2)
-        int_df['HorizRangeRtFtSec'] = (int_enu[1] * knots_to_fps(int_df['NorthVel(knots)'].values -
-                                                                 own_df['NorthVel(knots)'].values) +
-                                       int_enu[0] * knots_to_fps(int_df['EastVel(knots)'].values -
-                                                                 own_df['EastVel(knots)'].values) /
-                                       int_df['HorizRangeFt'].values)
+        int_df['HorizRangeRtFtSec'] =  np.sqrt((int_enu[1] + knots_to_fps(int_df['NorthVel(knots)'].values -
+                                                                 own_df['NorthVel(knots)'].values))**2 +
+                                              (int_enu[0] + knots_to_fps(int_df['EastVel(knots)'].values -
+                                                                 own_df['EastVel(knots)'].values))**2) - \
+                                       int_df['HorizRangeFt'].values
+
         int_df['RelAltFt'] = int_df['Alt(ft)'].values - own_df['Alt(ft)'].values
 
         azimuth_bodyframe = np.zeros(int_df.shape[0])

@@ -94,10 +94,10 @@ def vertical_closure_rate(own_info, int_info):
 
 # Hazard zone and alert classification ##############################
 tau_mod_crit = {'HAZ': {'preventive': 35, 'corrective': 35, 'warning': 35},
-                'HAZNot': {'preventive': 110, 'corrective': 110, 'warning': 95}}
-dmod = {'HAZ': {'preventive': 4000, 'corrective': 4000, 'warning': 4000},
-        'HAZNot': {'preventive': nmi_to_feet(2), 'corrective': nmi_to_feet(1.5),
-                   'warning': nmi_to_feet(1)}}
+                'HAZNot': {'preventive': 110, 'corrective': 110, 'warning': 90}}
+dmod = {'HAZ': {'preventive': nmi_to_feet(.66), 'corrective': nmi_to_feet(.66), 'warning': nmi_to_feet(.66)},
+        'HAZNot': {'preventive': nmi_to_feet(1.5), 'corrective': nmi_to_feet(1.5),
+                   'warning': nmi_to_feet(1.2)}}
 v_crit = {'HAZ': {'preventive': 700, 'corrective': 450, 'warning': 450},
           'HAZNot': {'preventive': 800, 'corrective': 450, 'warning': 450}}
 algo_tau_mod_deltas = {'corrective': 75, 'warning': 65}
@@ -125,7 +125,7 @@ def hazard_zone_classification(positions, headings, ground_speeds, vertical_rate
     """
     hmd, vmd, cpa_time = miss_distance(positions, headings, ground_speeds, vertical_rates)
     if cpa_time < 0:
-        hmd = np.inf
+        hmd = horiz_range
     
     v_dist = np.abs(positions[0][-1] - positions[1][-1])
     v_rate1, v_rate2 = vertical_rates
@@ -157,3 +157,29 @@ def hazard_zone_classification(positions, headings, ground_speeds, vertical_rate
             zone = 'MZ'
     
     return zone, tau_mod_haz, hmd, vmd
+
+
+def haz_time_from_truth_df(truth_df):
+    try:
+        ix = np.nonzero(truth_df['HZ'].values == 1)[0][0]
+        time = truth_df.index[ix]
+        return time, ix
+    except IndexError:
+        return None, None
+
+
+def haznot_leave_time_from_truth_df(truth_df):
+    _, haz_ix = haz_time_from_truth_df(truth_df)
+    if haz_ix is None:
+        end_ix = truth_df.shape[0]
+    else:
+        end_ix = haz_ix
+    try:
+        hzn_leave_ix = np.nonzero(truth_df['MZ'].values[:end_ix] == 1)[0][0]
+        return truth_df.index[hzn_leave_ix]
+    except IndexError:
+        try:
+            hzn_leave_ix = np.nonzero(truth_df['NHZ'].values[:end_ix] == 1)[0][-1]
+            return truth_df.index[hzn_leave_ix]
+        except IndexError:
+            return None

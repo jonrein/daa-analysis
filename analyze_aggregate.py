@@ -4,9 +4,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from aircraft import Aircraft
 from field_mappings import truth_var_map, error_var_map, error_units, truth_units
-from tracker_requirements import error_requirements_by_sensor, proportion_tracks_under_error_threshold
+from tracker_requirements import error_requirements_by_sensor, proportion_tracks_under_error_threshold, first_good_track_time
 
-OVERWRITE = False
+OVERWRITE = True
 CWD = os.getcwd()
 DATAPATH = os.path.abspath(os.path.join(CWD, os.pardir, 'data', 'daa-sensors'))
 
@@ -393,11 +393,15 @@ def write_scenario_set_output(scenario_set_directory, valid_wait_secs=0):
 
 def write_tracker_requirements_by_scenario(scenario_set_directory):
     from conversions import feet_to_nmi
+    from position_calcs import haznot_leave_time_from_truth_df, haz_time_from_truth_df
     write_scenario_set_output(scenario_set_directory)
     sensor = scenario_set_directory.split('_')[0]
     if sensor.startswith('AST'):
         sensor = 'AST'
-    log = {'ScenarioID': [], 'ProportionMet': [], 'ProportionValidMet': []}
+    log = {'ScenarioID': [], 'ProportionMet': [], 'ProportionValidMet': [],
+           'HAZNotLeaveTime': [], 'HAZEnterTime': [], 'FirstTrackTime': [], 'HAZNotLeadTime': [],
+           'HAZLeadTime': []
+           }
     for fn in os.listdir(os.path.join(DATAPATH, scenario_set_directory, 'Scenario_Output', 'Truth',
                                       'Truth_Logs')):
         scenario_name = fn.rsplit('_', 2)[0]
@@ -414,21 +418,48 @@ def write_tracker_requirements_by_scenario(scenario_set_directory):
                 truth_df_tmp[truth_var_map['Horizontal Range']])
         if sum(in_valid_range) == 0:
             log['ProportionMet'].append('TruthOutsideBounds')
-            log ['ProportionValidMet'].append('TruthOutsideBounds')
+            log['ProportionValidMet'].append('TruthOutsideBounds')
+            log['HAZNotLeaveTime'].append('N/A')
+            log['HAZEnterTime'].append('N/A')
+            log['FirstTrackTime'].append('N/A')
+            log['HAZNotLeadTime'].append('N/A')
+            log['HAZLeadTime'].append('N/A')
             continue
+        truth_df = truth_df_tmp.set_index('TimeSecs')
+        haznot_leave_time = haznot_leave_time_from_truth_df(truth_df)
+        if haznot_leave_time is None:
+            haznot_leave_time = 'N/A'
+        haz_enter_time, _ = haz_time_from_truth_df(truth_df)
+        if haz_enter_time is None:
+            haz_enter_time = 'N/A'
+        log['HAZNotLeaveTime'].append(haznot_leave_time)
+        log['HAZEnterTime'].append(haz_enter_time)
         try:
             error_df = pd.read_csv(os.path.join(DATAPATH, scenario_set_directory, 'Scenario_Output', 'Tracker',
                                                 'Error_Logs', scenario_name + '_tracker.csv'))
-            truth_df_tmp.set_index('TimeSecs', inplace=True)
             error_df.set_index('TimeSecs', inplace=True)
-            truth_df = Aircraft(truth_df_tmp).get_truth_interpolated(error_df, True)
-            proportion_met = proportion_tracks_under_error_threshold(truth_df, error_df, sensor)
+            truth_df_interp = Aircraft(truth_df).get_truth_interpolated(error_df, True)
+            proportion_met = proportion_tracks_under_error_threshold(truth_df_interp, error_df, sensor)
             log['ProportionMet'].append(proportion_met)
-            proportion_valid_met = proportion_tracks_under_error_threshold(truth_df, error_df, sensor, valid_filter=True)
+            proportion_valid_met = proportion_tracks_under_error_threshold(truth_df_interp, error_df, sensor, valid_filter=True)
             log['ProportionValidMet'].append(proportion_valid_met)
+            first_good_time_tracker = first_good_track_time(truth_df_interp, error_df, sensor)
+            log['FirstTrackTime'].append(first_good_time_tracker)
+            if (haznot_leave_time != 'N/A') and (first_good_time_tracker is not None):
+                log['HAZNotLeadTime'].append(haznot_leave_time - first_good_time_tracker)
+            else:
+                log['HAZNotLeadTime'].append('N/A')
+            if (haz_enter_time != 'N/A') and (first_good_time_tracker is not None):
+                log['HAZLeadTime'].append(haz_enter_time - first_good_time_tracker)
+            else:
+                log['HAZLeadTime'].append('N/A')
+
         except OSError:  # no tracker data
             log['ProportionMet'].append('NoTrackerData')
             log['ProportionValidMet'].append('NoTrackerData')
+            log['FirstTrackTime'].append('N/A')
+            log['HAZNotLeadTime'].append('N/A')
+            log['HAZLeadTime'].append('N/A')
     pd.DataFrame(log).to_csv(os.path.join(DATAPATH, scenario_set_directory, 'Aggregate_Output', 'Tracker',
                                           'Error_requirements_log.csv'))
 
@@ -437,8 +468,8 @@ if __name__ == '__main__':
     scenario_sets = ['ADS-B_', 'Radar_', 'AST-S_', 'AST-C_']
 
     for s_set in scenario_sets:
-        write_scenario_set_output(s_set)
-        # write_tracker_requirements_by_scenario(s_set)
+        # write_scenario_set_output(s_set)
+        write_tracker_requirements_by_scenario(s_set)
 
     comparison_output_path = os.path.join(DATAPATH, 'Comparisons')
     if not os.path.exists(comparison_output_path):
